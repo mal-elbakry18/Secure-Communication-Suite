@@ -1,46 +1,44 @@
-from src import BlockCipher, PublicKeyCryptosystem, Hashing
+from src.modules.block_cipher import BlockCipher
+from src.modules.public_key import PublicKeyCryptosystem
+from src.modules.hashing import HashingModule
+from src.modules.key_management import KeyManagement
+from src.modules.authentication import Authentication
+from src.modules.internet_security import InternetSecurity
 
-def main():
-    print("Secure Communication Suite")
-    print("1. Block Cipher (AES)")
-    print("2. Public Key Cryptosystem (RSA)")
-    print("3. Hashing (SHA-256/MD5)")
+# Simulated user store for authentication
+user_store = {}
 
-    choice = input("Select an option: ")
+# Step 1: User Registration
+auth = Authentication()
+username = "alice"
+password = "secure_password"
+auth.register_user(username, password, user_store)
 
-    if choice == "1":
-        cipher = BlockCipher()
-        message = input("Enter a message to encrypt: ")
-        ciphertext, tag = cipher.encrypt(message)
-        print(f"Ciphertext: {ciphertext}\nTag: {tag}")
-        plaintext = cipher.decrypt(ciphertext, tag)
-        print(f"Decrypted: {plaintext}")
+# Step 2: Generate RSA keys
+pkc = PublicKeyCryptosystem()
+private_key, public_key = pkc.generate_keys()
 
-    elif choice == "2":
-        rsa = PublicKeyCryptosystem()
-        message = input("Enter a message to encrypt: ")
-        ciphertext = rsa.encrypt(message)
-        print(f"Ciphertext: {ciphertext}")
-        plaintext = rsa.decrypt(ciphertext)
-        print(f"Decrypted: {plaintext}")
+# Step 3: Generate AES key
+key_manager = KeyManagement()
+aes_key = key_manager.generate_key()
 
-        signature = rsa.sign(message)
-        print(f"Signature: {signature}")
-        is_valid = rsa.verify(message, signature)
-        print(f"Is signature valid? {is_valid}")
+# Step 4: Securely share AES key using RSA
+encrypted_aes_key = pkc.encrypt(aes_key, public_key)
+shared_aes_key = pkc.decrypt(encrypted_aes_key, private_key)
 
-    elif choice == "3":
-        algorithm = input("Enter hashing algorithm (sha256/md5): ")
-        hasher = Hashing(algorithm=algorithm)
-        message = input("Enter a message to hash: ")
-        hash_value = hasher.generate_hash(message)
-        print(f"Hash: {hash_value}")
+# Step 5: Simulate messaging
+bc = BlockCipher()
+internet_security = InternetSecurity()
 
-        is_valid = hasher.verify_hash(message, hash_value)
-        print(f"Is hash valid? {is_valid}")
+# Message from Alice to Bob
+message = "Hello, Bob! This is a secure message."
+ciphertext, iv = bc.encrypt(message.encode(), shared_aes_key)
+encrypted_data = internet_security.encrypt(message.encode(), shared_aes_key)
+hashed_message = HashingModule.hash_sha256(message.encode())
 
-    else:
-        print("Invalid option.")
+print("Encrypted Message:", encrypted_data)
+print("Message Hash:", hashed_message)
 
-if __name__ == "__main__":
-    main()
+# Bob decrypts the message
+decrypted_message = bc.decrypt(ciphertext, shared_aes_key, iv).decode()
+print("Decrypted Message:", decrypted_message)
