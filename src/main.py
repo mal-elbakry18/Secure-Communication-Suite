@@ -1,4 +1,4 @@
-from src import BlockCipher, PublicKeyCryptosystem, Hashing
+'''from src import BlockCipher, PublicKeyCryptosystem, Hashing
 
 def main():
     print("Secure Communication Suite")
@@ -44,3 +44,49 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''
+'''#MAIN IMPLEMENTATION
+
+from server import start_server
+from client import start_client
+import threading
+
+def run_system():
+    # Start server in a separate thread
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+
+    # Simulate client messages
+    messages = ["Hello, Server!", "How are you?", "Goodbye!"]
+    for message in messages:
+        start_client(message)
+
+if __name__ == "__main__":
+    run_system()
+'''
+from modules.server import start_server
+from modules.client import start_client
+import threading
+import time
+
+if __name__ == "__main__":
+    # Start the server in a separate thread
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+
+    time.sleep(1)  # Give the server some time to start
+
+    # Start multiple clients for testing
+    def client_simulation(username):
+        start_client(username)
+
+    client1 = threading.Thread(target=client_simulation, args=("user1",))
+    client2 = threading.Thread(target=client_simulation, args=("user2",))
+
+    client1.start()
+    client2.start()
+
+    client1.join()
+    client2.join()
+
+    print("Testing complete.")
