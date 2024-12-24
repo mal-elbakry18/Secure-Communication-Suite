@@ -100,20 +100,33 @@ def start_client(username):
     client.close()
 '''
 
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.Signature import pkcs1_15
-from Crypto.Hash import SHA256
+
+from Cryptodome.PublicKey import RSA
+from Cryptodome.Cipher import PKCS1_OAEP
+from Cryptodome.Signature import pkcs1_15
+from Cryptodome.Hash import SHA256
 import socket
 import os
+import threading
+
+def receive_messages(client):
+    """Continuously receive messages from the server."""
+    while True:
+        try:
+            message = client.recv(2048).decode()
+            if message:
+                print(f"\n{message}")  # Print the incoming message
+            else:
+                break
+        except Exception as e:
+            print(f"Error receiving messages: {e}")
+            break
 
 def sign_challenge(challenge, private_key):
-    """Sign the challenge with the private key."""
     h = SHA256.new(challenge)
     return pkcs1_15.new(private_key).sign(h)
 
 def session_key_exchange(client, private_key):
-    """Perform session key exchange."""
     public_key = private_key.publickey().export_key()
     client.send(public_key)
 
@@ -122,51 +135,63 @@ def session_key_exchange(client, private_key):
     return cipher_rsa.decrypt(encrypted_key)
 
 def start_client(username):
-    """Start the client."""
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client.connect(('localhost', 5000))
+    try:
+        client.connect(('localhost', 5566))
+    except ConnectionRefusedError:
+        print("Unable to connect to the server. Make sure the server is running.")
+        return
 
-    client.send(username.encode())
-    response = client.recv(1024).decode()
+    try:
+        client.send(username.encode())
+        response = client.recv(1024).decode()
 
-    if response == "SIGN_UP":
-        print(client.recv(4096).decode())
-    elif response == "SIGN_IN":
-        private_key = RSA.import_key(open(f"{username}_private.pem").read())
-        challenge = client.recv(1024)
-        signature = sign_challenge(challenge, private_key)
-        client.send(signature)
+        if response == "SIGN_UP":
+            print(f"{username} registered successfully.")
+        elif response == "SIGN_IN":
+            try:
+                private_key = RSA.import_key(open(f"{username}_private.pem").read())
+            except FileNotFoundError:
+                print(f"Private key file for {username} is missing!")
+                return
 
-        if client.recv(1024).decode() == "AUTH_FAILED":
-            print("Authentication failed.")
-            return
+            challenge = client.recv(1024)
+            signature = sign_challenge(challenge, private_key)
+            client.send(signature)
 
-        aes_key = session_key_exchange(client, private_key)
-        print(f"Session established with AES key: {aes_key.hex()}")
+            if client.recv(1024).decode() == "AUTH_FAILED":
+                print("Authentication failed.")
+                return
 
-    while True:
-        choice = input("Send (1) Message or (2) File? (q to quit): ")
-        if choice == '1':
-            message = input("Enter message: ").encode()
-            client.send("MESSAGE".encode())
-            client.send(message)
-        elif choice == '2':
-            file_path = input("Enter file path: ")
-            if os.path.exists(file_path):
-                file_size = os.path.getsize(file_path)
-                client.send("FILE".encode())
-                client.send(os.path.basename(file_path).encode())
-                client.send(str(file_size).encode())
-                with open(file_path, "rb") as file:
-                    while chunk := file.read(1024):
-                        client.send(chunk)
-                print(f"File {os.path.basename(file_path)} sent.")
-            else:
-                print("File does not exist.")
-        elif choice == 'q':
-            break
+        while True:
+            try:
+                choice = input("Choose an option: (1) Send Message, (2) Receive Messages, (q) Quit: ")
+                if choice == '1':
+                    recipient = input("Enter recipient username: ").strip()
+                    message = input("Enter message: ").strip()
+                    client.send("MESSAGE".encode())  # Send message type
+                    client.send(recipient.encode())  # Send recipient username
+                    client.send(message.encode())  # Send actual message
+                elif choice == '2':
+                    client.send("RECEIVE".encode())  # Request to receive messages
+                    while True:
+                        message = client.recv(2048).decode()
+                        if message == "END_OF_MESSAGES":
+                            break
+                        print(message)
+                elif choice == 'q':
+                    client.send("EXIT".encode())  # Inform server of exit
+                    break
+            except BrokenPipeError:
+                print("Connection to the server was lost.")
+                break
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        client.close()
 
-    client.close()
+
 
 if __name__ == "__main__":
-    start_client()
+    username = input("Enter your username: ")
+    start_client(username)

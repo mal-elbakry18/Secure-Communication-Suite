@@ -68,25 +68,28 @@ from modules.server import start_server
 from modules.client import start_client
 import threading
 import time
+import sys
 
-if __name__ == "__main__":
-    # Start the server in a separate thread
+
+def run_server():
+    """Start the server in a separate thread."""
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()
 
     time.sleep(1)  # Give the server some time to start
 
-    # Start multiple clients for testing
-    def client_simulation(username):
-        start_client(username)
 
-    client1 = threading.Thread(target=client_simulation, args=("user1",))
-    client2 = threading.Thread(target=client_simulation, args=("user2",))
+def run_client(username):
+    """Start a client simulation."""
+    start_client(username)
 
-    client1.start()
-    client2.start()
 
-    client1.join()
-    client2.join()
-
-    print("Testing complete.")
+if __name__ == "__main__":
+    if len(sys.argv) == 1:  # Run as server
+        run_server()
+        print("Server started. Press Ctrl+C to stop the server.")
+        while True:
+            pass  # Keep the server running indefinitely
+    elif len(sys.argv) == 3 and sys.argv[1] == 'client':  # Run as client
+        username = sys.argv[2]
+        run_client(username)
