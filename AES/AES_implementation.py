@@ -1,4 +1,5 @@
-from Crypto.Cipher import AES
+#from Crypto.Cipher import AES
+from Cryptodome.Cipher import AES
 from Crypto.Random import get_random_bytes
 import base64
 
@@ -53,7 +54,7 @@ def example_usage():
     print("Generated AES Key:", base64.b64encode(aes.key).decode('utf-8'))
 
     # Encrypt a message
-    plaintext = "This is a secret message."
+    plaintext = "New Message."
     encrypted = aes.encrypt(plaintext)
     print("Encrypted Message:", encrypted)
 
