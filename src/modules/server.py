@@ -7,7 +7,11 @@ from Cryptodome.Random import get_random_bytes
 import socket
 import threading
 import queue
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad, unpad
 
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad, unpad
 print("Server imports successful!")
 
 USERS = {}
@@ -42,7 +46,7 @@ def generate_session_key():
 
 
 def handle_live_chat(user1, user2):
-    """Handle bidirectional live chat between two users."""
+    """Handle bidirectional live chat between two users with AES encryption."""
     try:
         client1 = CLIENTS[user1]
         client2 = CLIENTS[user2]
@@ -51,23 +55,53 @@ def handle_live_chat(user1, user2):
         client1.send(f"[INFO] Live chat started with {user2}. Type 'exit' to leave.".encode())
         client2.send(f"[INFO] Live chat started with {user1}. Type 'exit' to leave.".encode())
 
+        # Generate a shared session key
+        session_key = generate_session_key()
+
+        # Encrypt session key for each user using their RSA public key and send it
+        cipher_rsa1 = PKCS1_OAEP.new(RSA.import_key(USERS[user1]["public_key"]))
+        cipher_rsa2 = PKCS1_OAEP.new(RSA.import_key(USERS[user2]["public_key"]))
+        client1.send(cipher_rsa1.encrypt(session_key))
+        client2.send(cipher_rsa2.encrypt(session_key))
+
         # Define message relaying functions
-        def relay_messages(sender, receiver, sender_name):
-            """Relay messages from one client to another."""
+        def relay_messages(sender, receiver, sender_name, session_key):
+            """Relay messages from one client to another using AES encryption."""
             try:
                 while True:
-                    message = sender.recv(1024).decode(errors="ignore")
-                    if not message or message.lower() == "exit":
+                    # Receive the encrypted message from the sender
+                    encrypted_message = sender.recv(1024)
+                    if not encrypted_message:
+                        break
+
+                    # Extract the IV (first 16 bytes) and ciphertext
+                    iv = encrypted_message[:16]
+                    ciphertext = encrypted_message[16:]
+
+                    # Decrypt the message using AES
+                    cipher = AES.new(session_key, AES.MODE_CBC, iv=iv)
+                    plaintext = unpad(cipher.decrypt(ciphertext), AES.block_size).decode()
+
+                    # Handle "exit" message
+                    if plaintext.lower() == "exit":
                         receiver.send(f"[INFO] {sender_name} has left the live chat.".encode())
                         break
-                    receiver.send(f"{sender_name}: {message}".encode())
+
+                    # Encrypt the message for the receiver
+                    cipher = AES.new(session_key, AES.MODE_CBC)
+                    iv = cipher.iv
+                    encrypted_response = iv + cipher.encrypt(
+                        pad(f"{sender_name}: {plaintext}".encode(), AES.block_size))
+
+                    # Send the encrypted message to the receiver
+                    receiver.send(encrypted_response)
             except Exception as e:
                 print(f"[ERROR] Error relaying messages from {sender_name}: {e}")
                 receiver.send(f"[ERROR] Connection lost with {sender_name}.".encode())
 
         # Start threads for bidirectional communication
-        thread1 = threading.Thread(target=relay_messages, args=(client1, client2, user1), daemon=True)
-        thread2 = threading.Thread(target=relay_messages, args=(client2, client1, user2), daemon=True)
+        thread1 = threading.Thread(target=relay_messages, args=(client1, client2, user1, session_key), daemon=True)
+        thread2 = threading.Thread(target=relay_messages, args=(client2, client1, user2, session_key), daemon=True)
         thread1.start()
         thread2.start()
 
@@ -82,10 +116,6 @@ def handle_live_chat(user1, user2):
             CLIENTS[user1].send("[INFO] Live chat ended.".encode())
         if user2 in CLIENTS:
             CLIENTS[user2].send("[INFO] Live chat ended.".encode())
-
-
-
-
 
 
 def handle_client(client):
@@ -156,29 +186,48 @@ def handle_client(client):
 
                         if target_user in CLIENTS:
 
-                            CLIENTS[target_user].send(f"LIVE_REQUEST|{username}".encode())
+                            try:
 
-                            print(f"[DEBUG] Live chat request sent to {target_user} from {username}.")
+                                # Notify the initiating user that the request has been sent
 
-                            # Wait for the target user's response
+                                client.send("LIVE_REQUEST_SENT".encode())
 
-                            response = CLIENTS[target_user].recv(1024).decode()
+                                CLIENTS[target_user].send(f"LIVE_REQUEST|{username}".encode())
 
-                            if response == "LIVE_ACCEPT":
+                                print(f"[DEBUG] Live chat request sent to {target_user} from {username}.")
 
-                                print(f"[DEBUG] {target_user} accepted the live chat request from {username}.")
+                                # Wait for the target user's response
 
-                                client.send("LIVE_READY".encode())
+                                response = CLIENTS[target_user].recv(1024).decode().strip()
 
-                                CLIENTS[target_user].send("LIVE_READY".encode())
+                                if response == "LIVE_ACCEPT":
 
-                                handle_live_chat(username, target_user)
+                                    print(f"[DEBUG] {target_user} accepted the live chat request from {username}.")
 
-                            elif response == "LIVE_DECLINE":
+                                    client.send("LIVE_READY".encode())
 
-                                print(f"[DEBUG] {target_user} declined the live chat request from {username}.")
+                                    CLIENTS[target_user].send("LIVE_READY".encode())
 
-                                client.send("LIVE_DECLINED".encode())
+                                    handle_live_chat(username, target_user)
+
+
+                                elif response == "LIVE_DECLINE":
+
+                                    print(f"[DEBUG] {target_user} declined the live chat request from {username}.")
+
+                                    client.send("LIVE_DECLINED".encode())
+
+                                else:
+
+                                    print(f"[ERROR] Invalid response from {target_user}: {response}")
+
+                                    client.send("LIVE_ERROR".encode())
+
+                            except BrokenPipeError:
+
+                                print(f"[ERROR] Target user {target_user} disconnected during live chat setup.")
+
+                                client.send("USER_OFFLINE".encode())
 
                         else:
 
@@ -213,7 +262,7 @@ def handle_client(client):
             del CLIENTS[username]
         client.close()
 
-    def start_server():
+def start_server():
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.bind(("0.0.0.0", 5566))
             server.listen(5)
@@ -224,3 +273,49 @@ def handle_client(client):
 
 if __name__ == "__main__":
             start_server()
+
+''' elif data_type == "LIVE":
+
+                   try:
+
+                       target_user = client.recv(1024).decode().strip()
+
+                       print(f"[DEBUG] {username} is requesting a live conversation with {target_user}.")
+
+                       if target_user in CLIENTS:
+
+                           CLIENTS[target_user].send(f"LIVE_REQUEST|{username}".encode())
+
+                           print(f"[DEBUG] Live chat request sent to {target_user} from {username}.")
+
+                           # Wait for the target user's response
+
+                           response = CLIENTS[target_user].recv(1024).decode()
+
+                           if response == "LIVE_ACCEPT":
+
+                               print(f"[DEBUG] {target_user} accepted the live chat request from {username}.")
+
+                               client.send("LIVE_READY".encode())
+
+                               CLIENTS[target_user].send("LIVE_READY".encode())
+
+                               handle_live_chat(username, target_user)
+
+                           elif response == "LIVE_DECLINE":
+
+                               print(f"[DEBUG] {target_user} declined the live chat request from {username}.")
+
+                               client.send("LIVE_DECLINED".encode())
+
+                       else:
+
+                           print(f"[DEBUG] {target_user} is not online.")
+
+                           client.send("USER_OFFLINE".encode())
+
+                   except Exception as e:
+
+                       print(f"[ERROR] Error during live chat setup for {username}: {e}")
+
+                       client.send("LIVE_ERROR".encode())'''

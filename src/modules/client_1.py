@@ -4,6 +4,9 @@ import threading
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Signature import pkcs1_15
 from Cryptodome.Hash import SHA256
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad, unpad
+from Cryptodome.Cipher import PKCS1_OAEP
 
 def receive_messages(client):
     """Continuously receive queued messages from the server."""
@@ -21,7 +24,6 @@ def receive_messages(client):
     except Exception as e:
         print(f"[ERROR] Error receiving messages: {e}")
 
-
 def generate_and_save_keys(username):
     """Generate RSA keys and save them to .pem files."""
     if not os.path.exists(f"{username}_private.pem") or not os.path.exists(f"{username}_public.pem"):
@@ -35,7 +37,6 @@ def generate_and_save_keys(username):
     else:
         print(f"[DEBUG] RSA keys already exist for {username}.")
 
-
 def sign_challenge(challenge, private_key):
     """Sign the server-provided challenge for authentication."""
     h = SHA256.new(challenge)
@@ -43,22 +44,44 @@ def sign_challenge(challenge, private_key):
     return pkcs1_15.new(private_key).sign(h)
 
 
+
 def start_live_chat(client):
-    """Handle live chat with proper bidirectional communication."""
-    def receive_live_messages():
+    """Handle live chat with AES encryption."""
+    def receive_live_messages(session_key):
         """Receive messages during live chat."""
         try:
             while True:
-                message = client.recv(1024).decode(errors="ignore")
-                if not message or message.lower() == "exit":
-                    print("[INFO] Live conversation ended.")
+                # Receive the encrypted message
+                encrypted_message = client.recv(1024)
+                if not encrypted_message:
                     break
-                print(message)  # Display the received message
+
+                # Extract the IV (first 16 bytes) and ciphertext
+                iv = encrypted_message[:16]
+                ciphertext = encrypted_message[16:]
+
+                # Decrypt the message
+                cipher = AES.new(session_key, AES.MODE_CBC, iv=iv)
+                plaintext = unpad(cipher.decrypt(ciphertext), AES.block_size).decode()
+
+                if plaintext.lower() == "exit":
+                    print("[INFO] The other user has left the chat.")
+                    break
+
+                # Display the decrypted message
+                print(plaintext)
         except Exception as e:
             print(f"[ERROR] Error receiving live messages: {e}")
 
+    # Receive and decrypt the session key
+    encrypted_session_key = client.recv(1024)
+    with open(f"{username}_private.pem", "rb") as priv_file:
+        private_key = RSA.import_key(priv_file.read())
+    cipher_rsa = PKCS1_OAEP.new(private_key)
+    session_key = cipher_rsa.decrypt(encrypted_session_key)
+
     # Start a thread to handle incoming messages
-    receiver_thread = threading.Thread(target=receive_live_messages, daemon=True)
+    receiver_thread = threading.Thread(target=receive_live_messages, args=(session_key,), daemon=True)
     receiver_thread.start()
 
     # Handle outgoing messages
@@ -66,10 +89,18 @@ def start_live_chat(client):
         while True:
             msg = input()
             if msg.lower() == "exit":
-                client.send("exit".encode())
+                cipher = AES.new(session_key, AES.MODE_CBC)
+                iv = cipher.iv
+                encrypted_message = iv + cipher.encrypt(pad("exit".encode(), AES.block_size))
+                client.send(encrypted_message)
                 print("[INFO] Exiting live conversation...")
                 break
-            client.send(msg.encode())
+
+            # Encrypt the message with AES
+            cipher = AES.new(session_key, AES.MODE_CBC)
+            iv = cipher.iv
+            encrypted_message = iv + cipher.encrypt(pad(msg.encode(), AES.block_size))
+            client.send(encrypted_message)
     except Exception as e:
         print(f"[ERROR] Error sending live messages: {e}")
     finally:
@@ -153,6 +184,8 @@ def start_client(username):
                             print(f"[INFO] {target_user} declined the live chat request.")
                             break
 
+
+
                         elif response == "USER_OFFLINE":
                             print(f"[INFO] {target_user} is offline or not available.")
                             break
@@ -177,7 +210,6 @@ def start_client(username):
     finally:
         client.close()
         print("[DEBUG] Client socket closed.")
-
 
 if __name__ == "__main__":
     username = input("Enter your username: ")
